@@ -240,50 +240,88 @@
     .status.ok { background: var(--accent-dim); color: var(--accent); border: 1px solid rgba(0,255,136,0.2); }
     .status.err { background: var(--red-dim); color: var(--red); border: 1px solid rgba(255,68,102,0.2); }
 
-    /* Summary cards */
-    .summary-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 16px;
-      margin-bottom: 32px;
+    /* Hero */
+    .hero {
+      margin-bottom: 28px;
+      padding: 8px 0 24px;
     }
 
-    .card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 20px;
-      position: relative;
-      overflow: hidden;
-    }
-
-    .card::before {
-      content: '';
-      position: absolute;
-      top: 0; left: 0; right: 0;
-      height: 2px;
-      background: linear-gradient(90deg, var(--accent), transparent);
-    }
-
-    .card-label {
+    .hero-label {
       font-family: 'DM Mono', monospace;
       font-size: 0.65rem;
+      letter-spacing: 0.16em;
       color: var(--muted);
-      letter-spacing: 0.12em;
       text-transform: uppercase;
-      margin-bottom: 8px;
+      margin-bottom: 10px;
     }
 
-    .card-value {
+    .hero-value {
       font-family: 'DM Mono', monospace;
-      font-size: 1.5rem;
+      font-size: clamp(2.4rem, 8vw, 3.8rem);
+      font-weight: 500;
+      color: var(--text);
+      letter-spacing: -0.02em;
+      line-height: 1;
+      margin-bottom: 10px;
+    }
+
+    .hero-change {
+      font-family: 'DM Mono', monospace;
+      font-size: 1rem;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .hero-change .up { color: var(--accent); }
+    .hero-change .down { color: var(--red); }
+
+    /* Stats row */
+    .stats-row {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px 24px;
+      margin-bottom: 32px;
+      overflow-x: auto;
+    }
+
+    .stat {
+      flex: 1;
+      min-width: 100px;
+      text-align: center;
+    }
+
+    .stat-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 0.62rem;
+      color: var(--muted);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .stat-value {
+      font-family: 'DM Mono', monospace;
+      font-size: 0.95rem;
       font-weight: 500;
       color: var(--text);
     }
 
-    .card-value.green { color: var(--accent); }
-    .card-value.red { color: var(--red); }
-    .card-sub { font-size: 0.72rem; color: var(--muted); margin-top: 4px; font-family: 'DM Mono', monospace; }
+    .stat-value.pos { color: var(--accent); }
+    .stat-value.neg { color: var(--red); }
+
+    .stat-divider {
+      width: 1px;
+      height: 36px;
+      background: var(--border);
+      flex-shrink: 0;
+      margin: 0 8px;
+    }
 
     /* Tabs */
     .tabs {
@@ -514,27 +552,33 @@
 
   <div class="status" id="status"></div>
 
-  <!-- Summary Cards -->
-  <div class="summary-grid" id="summaryGrid">
-    <div class="card">
-      <div class="card-label">Total Invested</div>
-      <div class="card-value" id="sumInvested">—</div>
-      <div class="card-sub">cost basis</div>
+  <!-- Hero Section -->
+  <div class="hero">
+    <div class="hero-label" id="heroLabel">PORTFOLIO VALUE</div>
+    <div class="hero-value" id="heroValue">—</div>
+    <div class="hero-change" id="heroChange"></div>
+  </div>
+
+  <!-- Slim Stats Row -->
+  <div class="stats-row">
+    <div class="stat">
+      <div class="stat-label">Invested</div>
+      <div class="stat-value" id="sumInvested">—</div>
     </div>
-    <div class="card">
-      <div class="card-label">Transactions</div>
-      <div class="card-value" id="sumTxCount">—</div>
-      <div class="card-sub">all time</div>
+    <div class="stat-divider"></div>
+    <div class="stat">
+      <div class="stat-label">Gain / Loss</div>
+      <div class="stat-value" id="sumGainLoss">—</div>
     </div>
-    <div class="card">
-      <div class="card-label">Holdings</div>
-      <div class="card-value" id="sumHoldings">—</div>
-      <div class="card-sub">unique positions</div>
+    <div class="stat-divider"></div>
+    <div class="stat">
+      <div class="stat-label">Breakeven Gap</div>
+      <div class="stat-value" id="sumGap">—</div>
     </div>
-    <div class="card">
-      <div class="card-label">Breakeven Gap</div>
-      <div class="card-value red" id="sumGap">—</div>
-      <div class="card-sub">vs $43,523 all-in</div>
+    <div class="stat-divider"></div>
+    <div class="stat">
+      <div class="stat-label">Positions</div>
+      <div class="stat-value" id="sumHoldings">—</div>
     </div>
   </div>
 
@@ -923,14 +967,52 @@
   // ── Summary ───────────────────────────────────────────────
   function updateSummary() {
     const holdings = computeHoldings();
+
+    // Cost basis = sum of active holdings only
     const totalCostBasis = Object.values(holdings).reduce((s, h) => s + h.costBasis, 0);
     const uniqueHoldings = Object.keys(holdings).length;
-    const gap = 43523 - totalCostBasis;
 
-    document.getElementById('sumInvested').textContent = '$' + totalCostBasis.toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:0});
-    document.getElementById('sumTxCount').textContent = transactions.length;
+    // Total ever invested (all buys including sold positions)
+    const totalEverInvested = 43523;
+
+    // Realized losses from sold positions
+    const realizedLoss = -17605.69;
+
+    // Unrealized gain = cost basis of active holdings vs current value (use cost basis as proxy until live prices)
+    const gainLoss = realizedLoss; // will be updated when live prices added
+    const gainPct = (gainLoss / totalEverInvested * 100).toFixed(2);
+
+    const breakEvenGap = totalEverInvested - totalCostBasis;
+
+    // Hero — show current cost basis as portfolio base
+    document.getElementById('heroValue').textContent =
+      '$' + totalCostBasis.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+
+    // Change line — realized P&L
+    const changeEl = document.getElementById('heroChange');
+    const isPos = gainLoss >= 0;
+    const arrow = isPos ? '▲' : '▼';
+    const cls = isPos ? 'up' : 'down';
+    changeEl.innerHTML = `<span class="${cls}">${arrow} $${Math.abs(gainLoss).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})} (${Math.abs(gainPct)}%)</span><span style="color:var(--muted)">realized P&L on closed positions</span>`;
+
+    // Stats row
+    document.getElementById('sumInvested').textContent =
+      '$' + totalEverInvested.toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:0});
+
+    const glEl = document.getElementById('sumGainLoss');
+    glEl.textContent = (gainLoss >= 0 ? '+' : '') + '$' + gainLoss.toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:0});
+    glEl.className = 'stat-value ' + (gainLoss >= 0 ? 'pos' : 'neg');
+
+    const gapEl = document.getElementById('sumGap');
+    if (breakEvenGap <= 0) {
+      gapEl.textContent = '✓ Recovered';
+      gapEl.className = 'stat-value pos';
+    } else {
+      gapEl.textContent = '-$' + Math.abs(breakEvenGap).toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:0});
+      gapEl.className = 'stat-value neg';
+    }
+
     document.getElementById('sumHoldings').textContent = uniqueHoldings;
-    document.getElementById('sumGap').textContent = gap > 0 ? '-$' + Math.abs(gap).toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:0}) : '✓ Recovered';
   }
 
   // ── UI Helpers ────────────────────────────────────────────
