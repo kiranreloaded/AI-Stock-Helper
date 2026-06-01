@@ -72,34 +72,135 @@
 
     .logo span { color: var(--muted); font-size: 1rem; font-family: 'DM Mono', monospace; margin-left: 10px; }
 
-    /* Config bar */
-    .config-bar {
-      background: var(--card);
+    /* Connection icon */
+    .conn-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: none;
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 16px 20px;
-      margin-bottom: 28px;
-      display: flex;
-      gap: 12px;
-      align-items: center;
-      flex-wrap: wrap;
+      padding: 7px 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-family: 'DM Mono', monospace;
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+    .conn-btn:hover { border-color: var(--accent); color: var(--text); }
+    .conn-btn.connected { border-color: rgba(0,255,136,0.3); color: var(--accent); }
+    .conn-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+      flex-shrink: 0;
+      transition: all 0.3s;
+    }
+    .conn-btn.connected .conn-dot {
+      background: var(--accent);
+      box-shadow: 0 0 8px rgba(0,255,136,0.6);
+      animation: connPulse 2s infinite;
+    }
+    @keyframes connPulse {
+      0%,100% { box-shadow: 0 0 6px rgba(0,255,136,0.6); }
+      50% { box-shadow: 0 0 14px rgba(0,255,136,0.9); }
     }
 
-    .config-bar input {
-      flex: 1;
-      min-width: 200px;
+    /* Modal */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      backdrop-filter: blur(4px);
+      z-index: 100;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 28px;
+      width: 100%;
+      max-width: 480px;
+      position: relative;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.6);
+      animation: modalIn 0.2s ease;
+    }
+    @keyframes modalIn {
+      from { opacity:0; transform: translateY(-12px) scale(0.97); }
+      to   { opacity:1; transform: translateY(0) scale(1); }
+    }
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+    .modal-title {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 1.2rem;
+      letter-spacing: 0.06em;
+      color: var(--accent);
+    }
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 1.2rem;
+      padding: 4px 8px;
+      border-radius: 4px;
+      transition: all 0.15s;
+      line-height: 1;
+    }
+    .modal-close:hover { color: var(--text); background: var(--border); }
+    .modal-field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+    .modal-field label {
+      font-family: 'DM Mono', monospace;
+      font-size: 0.65rem;
+      color: var(--muted);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+    .modal-field input {
       background: var(--bg);
       border: 1px solid var(--border);
       color: var(--text);
-      padding: 8px 12px;
-      border-radius: 6px;
+      padding: 10px 14px;
+      border-radius: 8px;
       font-family: 'DM Mono', monospace;
-      font-size: 0.78rem;
+      font-size: 0.82rem;
       outline: none;
       transition: border-color 0.2s;
+      width: 100%;
     }
-
-    .config-bar input:focus { border-color: var(--accent); }
+    .modal-field input:focus { border-color: var(--accent); }
+    .modal-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 20px;
+      align-items: center;
+    }
+    .modal-status {
+      font-family: 'DM Mono', monospace;
+      font-size: 0.72rem;
+      padding: 8px 14px;
+      border-radius: 6px;
+      margin-top: 14px;
+      display: none;
+    }
+    .modal-status.show { display: block; }
+    .modal-status.ok { background: var(--accent-dim); color: var(--accent); }
+    .modal-status.err { background: var(--red-dim); color: var(--red); }
     .config-label { color: var(--muted); font-size: 0.75rem; font-family: 'DM Mono', monospace; white-space: nowrap; }
 
     /* Buttons */
@@ -379,17 +480,36 @@
     <div>
       <div class="logo">AI Stock Helper <span>v1.0</span></div>
     </div>
-    <div style="font-family:'DM Mono',monospace;font-size:0.72rem;color:var(--muted)" id="lastSync">not synced</div>
+    <div style="display:flex;align-items:center;gap:16px">
+      <div style="font-family:'DM Mono',monospace;font-size:0.72rem;color:var(--muted)" id="lastSync">not synced</div>
+      <button class="conn-btn" id="connBtn" onclick="openModal()">
+        <div class="conn-dot"></div>
+        <span id="connLabel">Disconnected</span>
+      </button>
+    </div>
   </header>
 
-  <!-- Config -->
-  <div class="config-bar">
-    <span class="config-label">UPSTASH URL</span>
-    <input type="text" id="upstashUrl" placeholder="https://your-db.upstash.io" />
-    <span class="config-label">TOKEN</span>
-    <input type="password" id="upstashToken" placeholder="your REST token" />
-    <button class="btn btn-primary" onclick="connect()">Connect</button>
-    <button class="btn btn-ghost" onclick="loadSeedData()">Seed Demo Data</button>
+  <!-- Connection Modal -->
+  <div class="modal-overlay" id="modalOverlay" onclick="handleOverlayClick(event)">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title">Upstash Connection</div>
+        <button class="modal-close" onclick="closeModal()">&#x2715;</button>
+      </div>
+      <div class="modal-field">
+        <label>REST URL</label>
+        <input type="text" id="upstashUrl" placeholder="https://your-db.upstash.io" />
+      </div>
+      <div class="modal-field">
+        <label>REST Token</label>
+        <input type="password" id="upstashToken" placeholder="your token" />
+      </div>
+      <div class="modal-status" id="modalStatus"></div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" onclick="connect()">Connect</button>
+        <button class="btn btn-ghost" onclick="loadSeedData()">Seed Robinhood Data</button>
+      </div>
+    </div>
   </div>
 
   <div class="status" id="status"></div>
@@ -576,11 +696,11 @@
     upstashToken = document.getElementById('upstashToken').value.trim();
 
     if (!upstashUrl || !upstashToken) {
-      showStatus('Please enter both URL and token', 'err');
+      showModalStatus('Please enter both URL and token', 'err');
       return;
     }
 
-    showStatus('Connecting...', 'ok');
+    showModalStatus('Connecting...', 'ok');
 
     try {
       const res = await fetch(`${upstashUrl}/ping`, {
@@ -591,11 +711,14 @@
       sessionStorage.setItem(UPSTASH_URL_KEY, upstashUrl);
       sessionStorage.setItem(UPSTASH_TOKEN_KEY, upstashToken);
 
-      showStatus('✓ Connected to Upstash', 'ok');
+      showModalStatus('✓ Connected!', 'ok');
+      setConnected(true);
       document.getElementById('lastSync').textContent = 'synced ' + new Date().toLocaleTimeString();
       await loadTransactions();
+      setTimeout(closeModal, 800);
     } catch(e) {
-      showStatus('✗ Connection failed: ' + e.message, 'err');
+      showModalStatus('✗ Connection failed: ' + e.message, 'err');
+      setConnected(false);
     }
   }
 
@@ -820,11 +943,47 @@
     });
   }
 
+  // ── Modal ─────────────────────────────────────────────────
+  function openModal() {
+    document.getElementById('modalOverlay').classList.add('open');
+    const savedUrl = sessionStorage.getItem(UPSTASH_URL_KEY);
+    const savedToken = sessionStorage.getItem(UPSTASH_TOKEN_KEY);
+    if (savedUrl) document.getElementById('upstashUrl').value = savedUrl;
+    if (savedToken) document.getElementById('upstashToken').value = savedToken;
+  }
+
+  function closeModal() {
+    document.getElementById('modalOverlay').classList.remove('open');
+    document.getElementById('modalStatus').className = 'modal-status';
+  }
+
+  function handleOverlayClick(e) {
+    if (e.target === document.getElementById('modalOverlay')) closeModal();
+  }
+
+  function setConnected(state) {
+    const btn = document.getElementById('connBtn');
+    const label = document.getElementById('connLabel');
+    if (state) {
+      btn.classList.add('connected');
+      label.textContent = 'Connected';
+    } else {
+      btn.classList.remove('connected');
+      label.textContent = 'Disconnected';
+    }
+  }
+
   function showStatus(msg, type) {
     const el = document.getElementById('status');
     el.textContent = msg;
     el.className = 'status show ' + type;
     if (type === 'ok') setTimeout(() => el.classList.remove('show'), 4000);
+  }
+
+  function showModalStatus(msg, type) {
+    const el = document.getElementById('modalStatus');
+    el.textContent = msg;
+    el.className = 'modal-status show ' + type;
   }
 </script>
 </body>
