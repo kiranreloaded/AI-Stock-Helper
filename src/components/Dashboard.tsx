@@ -261,6 +261,42 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, holdings, ma
     setHoveredIndex(null);
   };
 
+  const handleTouchMove = (e: React.TouchEvent<SVGSVGElement>) => {
+    if (chartData.length === 0) return;
+    const svgRect = e.currentTarget.getBoundingClientRect();
+    const touch = e.touches[0];
+    if (!touch) return;
+    
+    const clientX = touch.clientX - svgRect.left;
+    
+    // Scale clientX to SVG space
+    const xInSvg = (clientX / svgRect.width) * width;
+    
+    // Find closest point
+    let closestIndex = 0;
+    let minDistance = Infinity;
+    
+    xCoords.forEach((x, index) => {
+      const dist = Math.abs(x - xInSvg);
+      if (dist < minDistance) {
+        minDistance = dist;
+        closestIndex = index;
+      }
+    });
+
+    setHoveredIndex(closestIndex);
+    setHoveredPoint(chartData[closestIndex]);
+  };
+
+  const handleTouchStart = (e: React.TouchEvent<SVGSVGElement>) => {
+    handleTouchMove(e);
+  };
+
+  const handleTouchEnd = () => {
+    setHoveredPoint(null);
+    setHoveredIndex(null);
+  };
+
   // Determine active display value (show hovered point if hovering, else current market value)
   const displayValue = hoveredPoint 
     ? hoveredPoint.value 
@@ -364,9 +400,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, holdings, ma
               viewBox={`0 0 ${width} ${height}`} 
               width="100%" 
               height="100%"
-              style={{ overflow: 'visible', cursor: 'crosshair' }}
+              style={{ overflow: 'visible', cursor: 'crosshair', touchAction: 'none' }}
               onMouseMove={handleMouseMove}
               onMouseLeave={handleMouseLeave}
+              onTouchStart={handleTouchStart}
+              onTouchMove={handleTouchMove}
+              onTouchEnd={handleTouchEnd}
+              onTouchCancel={handleTouchEnd}
             >
               {/* Single Horizontal Dotted Baseline at the bottom */}
               <line 
