@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronDown, TrendingUp, TrendingDown, Briefcase, HelpCircle, DollarSign, ArrowUp, ArrowDown } from 'lucide-react';
+import { ChevronDown, TrendingUp, TrendingDown, Briefcase, DollarSign, ArrowUp, ArrowDown, LayoutGrid } from 'lucide-react';
 import type { Transaction } from '../services/upstash';
 import { generateChartData } from '../utils/stockUtils';
 import type { Holding, ChartPoint } from '../utils/stockUtils';
@@ -19,7 +19,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, holdings, ma
   const activeTickers = React.useMemo(() => {
     return new Set(
       Object.entries(holdings)
-        .filter(([_, h]) => h.shares > 0)
+        .filter(([, h]) => h.shares > 0)
         .map(([ticker]) => ticker.toUpperCase())
     );
   }, [holdings]);
@@ -130,6 +130,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, holdings, ma
 
   // 1. Calculate stats
   const totalBuys = displayedTransactions.filter(t => t.action === 'BUY').reduce((sum, t) => sum + t.total, 0);
+  const totalSells = displayedTransactions.filter(t => t.action === 'SELL').reduce((sum, t) => sum + t.total, 0);
   
   // Calculate average cost and realized P&L chronologically
   let realizedPnL = 0;
@@ -170,28 +171,29 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, holdings, ma
     activeMarketValue += h.shares * currentPrice;
   });
 
-  // In NOW mode, the metrics are based purely on active holdings:
-  // - Invested Capital = activeCostBasis (money currently active in holdings)
-  // - Realized P&L = 0 (since they are currently held)
-  // - Breakeven Gap = activeCostBasis - activeMarketValue (how much active positions need to gain, or 0 if in profit)
-  const isSeedData = transactions.length === 26 && transactions[0].stock === 'LCID';
-  
-  const totalEverInvested = timeFilter === 'NOW'
+  const netOutOfPocket = timeFilter === 'NOW'
     ? activeCostBasis
-    : (isSeedData && timeFilter === 'ALL' ? 43523 : totalBuys);
+    : (totalBuys - totalSells);
 
-  const displayRealizedPnL = timeFilter === 'NOW' ? 0 : realizedPnL;
   const unrealizedPnL = activeMarketValue - activeCostBasis;
 
   const totalGainLoss = timeFilter === 'NOW'
     ? unrealizedPnL
     : (realizedPnL + unrealizedPnL);
 
-  const breakEvenGap = timeFilter === 'NOW'
-    ? Math.max(0, activeCostBasis - activeMarketValue)
-    : Math.max(0, totalEverInvested - activeMarketValue);
+  const totalMoneyMadePct = netOutOfPocket > 0
+    ? (totalGainLoss / netOutOfPocket * 100)
+    : (totalBuys > 0 ? (totalGainLoss / totalBuys * 100) : 0);
 
   const isGainPositive = totalGainLoss >= 0;
+
+  const netOutOfPocketSubtext = timeFilter === 'NOW'
+    ? 'Cost basis of active holdings'
+    : `Spent $${totalBuys.toLocaleString('en-US', { maximumFractionDigits: 0 })} - Sold $${totalSells.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+
+  const totalMoneyMadeSubtext = timeFilter === 'NOW'
+    ? `Unrealized: ${unrealizedPnL >= 0 ? '+' : ''}$${unrealizedPnL.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+    : `Realized: ${realizedPnL >= 0 ? '+' : ''}$${realizedPnL.toLocaleString('en-US', { maximumFractionDigits: 0 })} | Unreal: ${unrealizedPnL >= 0 ? '+' : ''}$${unrealizedPnL.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
 
   // 2. Generate Chart Data
   const chartData = React.useMemo(() => {
@@ -209,16 +211,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, holdings, ma
   let pathD = '';
   const xCoords: number[] = [];
   const yCoords: number[] = [];
+  let minVal = 0;
+  let valRange = 0;
 
   if (chartData.length > 1) {
     const values = chartData.map(d => d.value);
-    const maxVal = Math.max(...values, 100) * 1.05; // 5% buffer
-    const minVal = Math.min(...values, 0) * 0.95;
-    const valRange = maxVal - minVal;
+    const allValuesForScale = [...values, netOutOfPocket];
+    const maxVal = Math.max(...allValuesForScale, 100) * 1.05; // 5% buffer
+    minVal = Math.min(...allValuesForScale, 0) * 0.95;
+    valRange = maxVal - minVal;
 
+    const paddingX = 32;
     chartData.forEach((d, i) => {
-      // Go completely edge-to-edge horizontally (0 to width)
-      const x = (i / (chartData.length - 1)) * width;
+      // Leave horizontal padding to prevent dots and halos on edges from getting cut off
+      const x = paddingX + (i / (chartData.length - 1)) * (width - 2 * paddingX);
       // Leave minor vertical padding (15px top/bottom)
       const y = height - 15 - ((d.value - minVal) / (valRange || 1)) * (height - 30);
       xCoords.push(x);
@@ -231,6 +237,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, holdings, ma
       pathD += ` L ${xCoords[i]} ${yCoords[i]}`;
     }
   }
+
+  const netOutOfPocketY = height - 15 - ((netOutOfPocket - minVal) / (valRange || 1)) * (height - 30);
+  const isNetOutOfPocketLineVisible = chartData.length > 1 && netOutOfPocketY >= 15 && netOutOfPocketY <= height - 15;
 
   const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
     if (chartData.length === 0) return;
@@ -310,11 +319,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, holdings, ma
   const displayPnL = hoveredPoint 
     ? (timeFilter === 'NOW' 
         ? (hoveredPoint.value - activeCostBasis) 
-        : (hoveredPoint.value - totalEverInvested)) 
+        : (hoveredPoint.value - netOutOfPocket)) 
     : totalGainLoss;
 
-  const displayPnLPct = totalEverInvested > 0 
-    ? (displayPnL / totalEverInvested * 100) 
+  const displayPnLPct = netOutOfPocket > 0 
+    ? (displayPnL / netOutOfPocket * 100) 
     : 0;
 
   const isDisplayPositive = displayPnL >= 0;
@@ -418,6 +427,39 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, holdings, ma
                 strokeDasharray="4 4" 
               />
 
+              {/* Net Out of Pocket Horizontal Line */}
+              {isNetOutOfPocketLineVisible && (
+                <g>
+                  <line 
+                    x1={0} 
+                    y1={netOutOfPocketY} 
+                    x2={width} 
+                    y2={netOutOfPocketY} 
+                    stroke="rgba(255, 255, 255, 0.45)" 
+                    strokeDasharray="6 4" 
+                    strokeWidth="1.8" 
+                  />
+                  <text 
+                    x={width - 16} 
+                    y={netOutOfPocketY - 6} 
+                    textAnchor="end" 
+                    fill="rgba(255, 255, 255, 0.85)" 
+                    fontSize="12" 
+                    fontFamily="var(--font-sans)" 
+                    fontWeight="800"
+                    letterSpacing="0.06em"
+                    style={{
+                      paintOrder: 'stroke fill',
+                      stroke: '#000000',
+                      strokeWidth: '4px',
+                      strokeLinejoin: 'round'
+                    }}
+                  >
+                    NET OUT OF POCKET (${netOutOfPocket.toLocaleString('en-US', { maximumFractionDigits: 0 })})
+                  </text>
+                </g>
+              )}
+
               {/* Trend Line (No area fill, Robinhood sharp stroke style) */}
               {pathD && (
                 <path 
@@ -437,10 +479,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, holdings, ma
 
                 const hasBuy = txs.some(t => t.action === 'BUY');
                 const hasSell = txs.some(t => t.action === 'SELL');
-                let color = 'var(--accent)';
-                if (hasBuy && !hasSell) color = 'var(--accent)';
-                else if (hasSell && !hasBuy) color = 'var(--red)';
-                else color = '#ffffff';
+                const color = (hasBuy && !hasSell)
+                  ? 'var(--accent)'
+                  : (hasSell && !hasBuy)
+                    ? 'var(--red)'
+                    : '#ffffff';
 
                 const cx = xCoords[idx];
                 const cy = yCoords[idx];
@@ -606,10 +649,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, holdings, ma
       {/* Stats Row */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
         gap: '16px'
       }}>
-        <div className="glass-panel" style={{ background: '#000000', border: '1px solid var(--border)', padding: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+        {/* Tile 1: Net Out of Pocket */}
+        <div className="glass-panel" style={{ background: '#000000', border: '1px solid var(--border)', padding: '16px 20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
           <div style={{
             background: 'rgba(255, 255, 255, 0.03)',
             border: '1px solid var(--border)',
@@ -620,50 +664,40 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, holdings, ma
             <DollarSign size={20} />
           </div>
           <div>
-            <div className="color-muted" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.65rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Invested Capital</div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '1.25rem', fontWeight: 500, marginTop: '4px' }}>
-              ${totalEverInvested.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+            <div className="color-muted" style={{ fontFamily: 'var(--font-sans)', fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Net Out of Pocket</div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '1.25rem', fontWeight: 700, color: '#ffffff', marginTop: '4px', fontVariantNumeric: 'tabular-nums' }}>
+              ${netOutOfPocket.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+            </div>
+            <div style={{ fontFamily: 'var(--font-sans)', fontSize: '0.68rem', color: 'var(--muted)', marginTop: '4px' }}>
+              {netOutOfPocketSubtext}
             </div>
           </div>
         </div>
 
-        <div className="glass-panel" style={{ background: '#000000', border: '1px solid var(--border)', padding: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+        {/* Tile 2: Total Money Made */}
+        <div className="glass-panel" style={{ background: '#000000', border: '1px solid var(--border)', padding: '16px 20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
           <div style={{
-            background: displayRealizedPnL >= 0 ? 'rgba(0, 231, 86, 0.1)' : 'var(--red-dim)',
-            border: `1px solid ${displayRealizedPnL >= 0 ? 'rgba(0, 231, 86, 0.2)' : 'rgba(255, 68, 102, 0.2)'}`,
+            background: isGainPositive ? 'rgba(0, 231, 86, 0.1)' : 'var(--red-dim)',
+            border: `1px solid ${isGainPositive ? 'rgba(0, 231, 86, 0.2)' : 'rgba(255, 68, 102, 0.2)'}`,
             borderRadius: '12px',
             padding: '12px',
-            color: displayRealizedPnL >= 0 ? '#00e756' : 'var(--red)'
+            color: isGainPositive ? '#00e756' : 'var(--red)'
           }}>
-            {displayRealizedPnL >= 0 ? <TrendingUp size={20} /> : <TrendingDown size={20} />}
+            {isGainPositive ? <TrendingUp size={20} /> : <TrendingDown size={20} />}
           </div>
           <div>
-            <div className="color-muted" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.65rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Realized P&L</div>
-            <div className={displayRealizedPnL >= 0 ? 'color-pos' : 'color-neg'} style={{ fontFamily: 'var(--font-mono)', fontSize: '1.25rem', fontWeight: 500, marginTop: '4px' }}>
-              {displayRealizedPnL >= 0 ? '+' : ''}${displayRealizedPnL.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+            <div className="color-muted" style={{ fontFamily: 'var(--font-sans)', fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Total Money Made</div>
+            <div className={isGainPositive ? 'color-pos' : 'color-neg'} style={{ fontFamily: 'var(--font-mono)', fontSize: '1.25rem', fontWeight: 700, marginTop: '4px', fontVariantNumeric: 'tabular-nums' }}>
+              {totalGainLoss >= 0 ? '+' : ''}${totalGainLoss.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} ({totalGainLoss >= 0 ? '+' : ''}{totalMoneyMadePct.toFixed(2)}%)
+            </div>
+            <div style={{ fontFamily: 'var(--font-sans)', fontSize: '0.68rem', color: 'var(--muted)', marginTop: '4px' }}>
+              {totalMoneyMadeSubtext}
             </div>
           </div>
         </div>
 
-        <div className="glass-panel" style={{ background: '#000000', border: '1px solid var(--border)', padding: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <div style={{
-            background: breakEvenGap <= 0 ? 'rgba(0, 231, 86, 0.1)' : 'var(--red-dim)',
-            border: `1px solid ${breakEvenGap <= 0 ? 'rgba(0, 231, 86, 0.2)' : 'rgba(255, 68, 102, 0.2)'}`,
-            borderRadius: '12px',
-            padding: '12px',
-            color: breakEvenGap <= 0 ? '#00e756' : 'var(--red)'
-          }}>
-            <HelpCircle size={20} />
-          </div>
-          <div>
-            <div className="color-muted" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.65rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Breakeven Gap</div>
-            <div className={breakEvenGap <= 0 ? 'color-pos' : 'color-neg'} style={{ fontFamily: 'var(--font-mono)', fontSize: '1.25rem', fontWeight: 500, marginTop: '4px' }}>
-              {breakEvenGap <= 0 ? '✓ Recovered' : `-$${Math.abs(breakEvenGap).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`}
-            </div>
-          </div>
-        </div>
-
-        <div className="glass-panel" style={{ background: '#000000', border: '1px solid var(--border)', padding: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+        {/* Tile 3: Current Market Value */}
+        <div className="glass-panel" style={{ background: '#000000', border: '1px solid var(--border)', padding: '16px 20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
           <div style={{
             background: 'rgba(255, 255, 255, 0.03)',
             border: '1px solid var(--border)',
@@ -674,9 +708,34 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, holdings, ma
             <Briefcase size={20} />
           </div>
           <div>
-            <div className="color-muted" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.65rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Active Positions</div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '1.25rem', fontWeight: 500, marginTop: '4px' }}>
+            <div className="color-muted" style={{ fontFamily: 'var(--font-sans)', fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Current Market Value</div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '1.25rem', fontWeight: 700, color: '#ffffff', marginTop: '4px', fontVariantNumeric: 'tabular-nums' }}>
+              ${activeMarketValue.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+            </div>
+            <div style={{ fontFamily: 'var(--font-sans)', fontSize: '0.68rem', color: 'var(--muted)', marginTop: '4px' }}>
+              Current value of holdings
+            </div>
+          </div>
+        </div>
+
+        {/* Tile 4: Active Positions */}
+        <div className="glass-panel" style={{ background: '#000000', border: '1px solid var(--border)', padding: '16px 20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <div style={{
+            background: 'rgba(255, 255, 255, 0.03)',
+            border: '1px solid var(--border)',
+            borderRadius: '12px',
+            padding: '12px',
+            color: 'var(--muted)'
+          }}>
+            <LayoutGrid size={20} />
+          </div>
+          <div>
+            <div className="color-muted" style={{ fontFamily: 'var(--font-sans)', fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Active Positions</div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '1.25rem', fontWeight: 700, color: '#ffffff', marginTop: '4px', fontVariantNumeric: 'tabular-nums' }}>
               {Object.keys(holdings).length}
+            </div>
+            <div style={{ fontFamily: 'var(--font-sans)', fontSize: '0.68rem', color: 'var(--muted)', marginTop: '4px' }}>
+              Tickers currently held
             </div>
           </div>
         </div>
