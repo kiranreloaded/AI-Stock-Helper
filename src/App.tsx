@@ -10,6 +10,7 @@ import { UpstashService } from './services/upstash';
 import type { Transaction } from './services/upstash';
 import { computeHoldings } from './utils/stockUtils';
 import { fetchMultipleStocks } from './services/yahooFinance';
+import type { MarketHistoryCache } from './services/yahooFinance';
 import { LayoutGrid, ListCollapse, LineChart } from 'lucide-react';
 
 const UPSTASH_URL_KEY = 'upstash_url';
@@ -19,8 +20,8 @@ const TX_KEY = 'transactions';
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'holdings' | 'transactions'>('dashboard');
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [upstashUrl, setUpstashUrl] = useState('');
-  const [upstashToken, setUpstashToken] = useState('');
+  const [upstashUrl, setUpstashUrl] = useState(() => sessionStorage.getItem(UPSTASH_URL_KEY) || '');
+  const [upstashToken, setUpstashToken] = useState(() => sessionStorage.getItem(UPSTASH_TOKEN_KEY) || '');
   const [isConnected, setIsConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [lastSync, setLastSync] = useState('');
@@ -35,91 +36,6 @@ export const App: React.FC = () => {
 
   const upstashServiceRef = useRef<UpstashService | null>(null);
 
-  // Load market history (from cache or API)
-  const loadMarketHistory = async (tickers: string[]) => {
-    const service = upstashServiceRef.current;
-    if (!service) return;
-
-    const cacheKey = 'market_history';
-    let cachedData: Record<string, any> | null = null;
-
-    try {
-      const cached = await service.get<{ lastUpdated: number; data: Record<string, any> }>(cacheKey);
-      const cacheAgeLimit = 12 * 60 * 60 * 1000; // 12 hours
-
-      if (cached && cached.data) {
-        cachedData = cached.data;
-        const hasAllTickers = tickers.every(t => cached.data[t.toUpperCase()]);
-        const isFresh = Date.now() - cached.lastUpdated < cacheAgeLimit;
-
-        if (isFresh && hasAllTickers) {
-          setMarketHistory(cached.data);
-          return;
-        }
-      }
-    } catch (cacheErr) {
-      console.warn('Failed to read market history cache from database:', cacheErr);
-    }
-
-    // Try to fetch fresh data
-    try {
-      const freshData = await fetchMultipleStocks(tickers);
-      if (Object.keys(freshData).length > 0) {
-        setMarketHistory(freshData);
-
-        // Persist in Upstash
-        await service.set(cacheKey, {
-          lastUpdated: Date.now(),
-          data: freshData
-        });
-        return;
-      }
-    } catch (fetchErr) {
-      console.warn('Failed to fetch fresh stock data, falling back to cache:', fetchErr);
-    }
-
-    // Fallback to stale cached data if we have it
-    if (cachedData) {
-      setMarketHistory(cachedData);
-    } else {
-      console.error('No market history cache available and fetch failed.');
-    }
-  };
-
-  // Fetch/Load market price history when transactions change (holdings change)
-  useEffect(() => {
-    if (!isConnected || transactions.length === 0) {
-      setMarketHistory({});
-      return;
-    }
-
-    const holdings = computeHoldings(transactions);
-    const activeTickers = Object.keys(holdings);
-    if (activeTickers.length === 0) return;
-
-    loadMarketHistory(activeTickers);
-  }, [transactions, isConnected]);
-
-  // Restore saved config on mount
-  useEffect(() => {
-    const savedUrl = sessionStorage.getItem(UPSTASH_URL_KEY) || '';
-    const savedToken = sessionStorage.getItem(UPSTASH_TOKEN_KEY) || '';
-
-    if (savedUrl && savedToken) {
-      setUpstashUrl(savedUrl);
-      setUpstashToken(savedToken);
-      upstashServiceRef.current = new UpstashService(savedUrl, savedToken);
-      
-      // Auto-connect on mount (with auto-seed if empty)
-      handleConnect(savedUrl, savedToken, true);
-    } else {
-      // If not connected, open the connection modal to prompt user
-      setIsModalOpen(true);
-    }
-  }, []);
-
-
-
   // Show status banner notification with auto-dismiss
   const showNotification = (msg: string, type: 'ok' | 'err') => {
     setNotification({ message: msg, type });
@@ -130,65 +46,17 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleConnect = async (url: string, token: string, autoSeed = true): Promise<boolean> => {
-    const service = new UpstashService(url, token);
-    const ok = await service.ping();
-    
-    if (ok) {
-      upstashServiceRef.current = service;
-      setIsConnected(true);
-      setUpstashUrl(url);
-      setUpstashToken(token);
-      
-      sessionStorage.setItem(UPSTASH_URL_KEY, url);
-      sessionStorage.setItem(UPSTASH_TOKEN_KEY, token);
-      
-      setLastSync(new Date().toLocaleTimeString());
-      showNotification('Successfully connected to Upstash Database!', 'ok');
-      
-      // Load transactions with auto-seed capability
-      await loadTransactions(service, autoSeed);
-      return true;
-    } else {
-      setIsConnected(false);
-      showNotification('Upstash connection failed. Please check credentials.', 'err');
-      return false;
-    }
-  };
-
-  const cleanTransactions = (data: any): Transaction[] => {
+  const cleanTransactions = (data: unknown): Transaction[] => {
     if (!Array.isArray(data)) return [];
     return data.filter(tx => 
       tx && 
       typeof tx === 'object' && 
-      typeof tx.date === 'string' && 
-      typeof tx.stock === 'string' &&
-      (tx.action === 'BUY' || tx.action === 'SELL') &&
-      typeof tx.shares === 'number' &&
-      typeof tx.price === 'number'
+      'date' in tx && typeof tx.date === 'string' && 
+      'stock' in tx && typeof tx.stock === 'string' &&
+      'action' in tx && (tx.action === 'BUY' || tx.action === 'SELL') &&
+      'shares' in tx && typeof tx.shares === 'number' &&
+      'price' in tx && typeof tx.price === 'number'
     ) as Transaction[];
-  };
-
-  const loadTransactions = async (serviceInstance?: UpstashService, autoSeedIfEmpty = false) => {
-    const service = serviceInstance || upstashServiceRef.current;
-    if (!service) return;
-
-    setIsLoading(true);
-    try {
-      const data = await service.get<any[]>(TX_KEY);
-      const cleaned = cleanTransactions(data);
-      if (autoSeedIfEmpty && cleaned.length === 0) {
-        showNotification('Database is empty or invalid. Auto-seeding Robinhood history...', 'ok');
-        await handleSeed(service);
-      } else {
-        setTransactions(cleaned);
-        setLastSync(new Date().toLocaleTimeString());
-      }
-    } catch (err: any) {
-      showNotification(`Failed to load transactions: ${err.message || err}`, 'err');
-    } finally {
-      setIsLoading(false);
-    }
   };
 
   const handleSeed = async (serviceInstance?: UpstashService) => {
@@ -242,6 +110,160 @@ export const App: React.FC = () => {
     }
   };
 
+  const loadTransactions = async (serviceInstance?: UpstashService, autoSeedIfEmpty = false) => {
+    const service = serviceInstance || upstashServiceRef.current;
+    if (!service) return;
+
+    setIsLoading(true);
+    try {
+      const data = await service.get<unknown[]>(TX_KEY);
+      const cleaned = cleanTransactions(data);
+      if (autoSeedIfEmpty && cleaned.length === 0) {
+        showNotification('Database is empty or invalid. Auto-seeding Robinhood history...', 'ok');
+        await handleSeed(service);
+      } else {
+        setTransactions(cleaned);
+        setLastSync(new Date().toLocaleTimeString());
+      }
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      showNotification(`Failed to load transactions: ${errMsg}`, 'err');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleConnect = async (url: string, token: string, autoSeed = true): Promise<boolean> => {
+    const service = new UpstashService(url, token);
+    const ok = await service.ping();
+    
+    if (ok) {
+      upstashServiceRef.current = service;
+      setIsConnected(true);
+      setUpstashUrl(url);
+      setUpstashToken(token);
+      
+      sessionStorage.setItem(UPSTASH_URL_KEY, url);
+      sessionStorage.setItem(UPSTASH_TOKEN_KEY, token);
+      
+      setLastSync(new Date().toLocaleTimeString());
+      showNotification('Successfully connected to Upstash Database!', 'ok');
+      
+      // Load transactions with auto-seed capability
+      await loadTransactions(service, autoSeed);
+      return true;
+    } else {
+      setIsConnected(false);
+      showNotification('Upstash connection failed. Please check credentials.', 'err');
+      return false;
+    }
+  };
+
+  // Load market history (from cache or API)
+  const loadMarketHistory = async (tickers: string[]) => {
+    const service = upstashServiceRef.current;
+    if (!service) return;
+
+    const cacheKey = 'market_history';
+    let cachedData: MarketHistoryCache | null = null;
+
+    try {
+      const cached = await service.get<{ lastUpdated: number; data: MarketHistoryCache }>(cacheKey);
+      const cacheAgeLimit = 12 * 60 * 60 * 1000; // 12 hours
+      console.log('[DEBUG] Retrieved cache from DB:', cached);
+
+      if (cached && cached.data) {
+        cachedData = cached.data;
+        const hasAllTickers = tickers.every(t => cached.data[t.toUpperCase()]);
+        const isFresh = Date.now() - cached.lastUpdated < cacheAgeLimit;
+        console.log('[DEBUG] isFresh:', isFresh, 'hasAllTickers:', hasAllTickers, 'tickers:', tickers);
+
+        if (isFresh && hasAllTickers) {
+          console.log('[DEBUG] Using fresh and complete cache.');
+          setMarketHistory(cached.data);
+          return;
+        }
+      }
+    } catch (cacheErr) {
+      console.warn('Failed to read market history cache from database:', cacheErr);
+    }
+
+    // Try to fetch fresh data
+    try {
+      console.log('[DEBUG] Fetching fresh stock data for:', tickers);
+      const freshData = await fetchMultipleStocks(tickers);
+      console.log('[DEBUG] Fresh data fetched:', freshData);
+      
+      const fetchedCount = Object.keys(freshData).length;
+      if (fetchedCount > 0) {
+        const hasAllTickers = tickers.every(t => freshData[t.toUpperCase()]);
+
+        if (hasAllTickers) {
+          console.log('[DEBUG] Fetched all tickers successfully. Updating state and DB cache.');
+          setMarketHistory(freshData);
+
+          // Persist complete cache in Upstash
+          await service.set(cacheKey, {
+            lastUpdated: Date.now(),
+            data: freshData
+          });
+          return;
+        } else {
+          console.warn('[DEBUG] Fetch was incomplete. Merging with cache in state only (not overwriting DB).');
+          const mergedData = {
+            ...(cachedData || {}),
+            ...freshData
+          };
+          setMarketHistory(mergedData);
+          return;
+        }
+      }
+    } catch (fetchErr) {
+      console.warn('Failed to fetch fresh stock data, falling back to cache:', fetchErr);
+    }
+
+    // Fallback to stale cached data if we have it
+    if (cachedData) {
+      console.log('[DEBUG] Falling back to stale/incomplete cache:', cachedData);
+      setMarketHistory(cachedData);
+    } else {
+      console.error('[DEBUG] No market history cache available and fetch failed.');
+    }
+  };
+
+  // Fetch/Load market price history when transactions change (holdings change)
+  useEffect(() => {
+    if (!isConnected || transactions.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setMarketHistory({});
+      return;
+    }
+
+    const holdings = computeHoldings(transactions);
+    const activeTickers = Object.keys(holdings);
+    if (activeTickers.length === 0) return;
+
+    loadMarketHistory(activeTickers);
+  }, [transactions, isConnected]);
+
+  // Restore saved config on mount
+  useEffect(() => {
+    const savedUrl = sessionStorage.getItem(UPSTASH_URL_KEY) || '';
+    const savedToken = sessionStorage.getItem(UPSTASH_TOKEN_KEY) || '';
+
+    if (savedUrl && savedToken) {
+      upstashServiceRef.current = new UpstashService(savedUrl, savedToken);
+      
+      // Auto-connect on mount (with auto-seed if empty)
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      handleConnect(savedUrl, savedToken, true);
+    } else {
+      // If not connected, open the connection modal to prompt user
+      setIsModalOpen(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleSaveTransaction = async (txData: Omit<Transaction, 'id' | 'total'>, id?: number): Promise<boolean> => {
     const service = upstashServiceRef.current;
     if (!service) return false;
@@ -283,8 +305,9 @@ export const App: React.FC = () => {
         return true;
       }
       return false;
-    } catch (err: any) {
-      showNotification(`Failed to save transaction: ${err.message || err}`, 'err');
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      showNotification(`Failed to save transaction: ${errMsg}`, 'err');
       return false;
     }
   };
@@ -303,8 +326,9 @@ export const App: React.FC = () => {
         setLastSync(new Date().toLocaleTimeString());
         showNotification('Transaction deleted.', 'ok');
       }
-    } catch (err: any) {
-      showNotification(`Failed to delete transaction: ${err.message || err}`, 'err');
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      showNotification(`Failed to delete transaction: ${errMsg}`, 'err');
     }
   };
 

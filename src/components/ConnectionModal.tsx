@@ -28,6 +28,7 @@ export const ConnectionModal: React.FC<ConnectionModalProps> = ({
   });
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setUrl(savedUrl);
     setToken(savedToken);
   }, [savedUrl, savedToken]);

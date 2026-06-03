@@ -30,6 +30,7 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       if (transactionToEdit) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setDate(transactionToEdit.date);
         setTicker(transactionToEdit.stock);
         setAction(transactionToEdit.action);

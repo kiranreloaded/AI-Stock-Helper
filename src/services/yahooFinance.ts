@@ -11,47 +11,64 @@ export type MarketHistoryCache = Record<string, StockHistory>;
 export async function fetchStockData(ticker: string): Promise<StockHistory> {
   const cleanTicker = ticker.toUpperCase().trim();
   const rawUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${cleanTicker}?interval=1d&range=3mo`;
-  const url = `https://corsproxy.io/?${encodeURIComponent(rawUrl)}`;
+  
+  // List of public CORS proxies to try sequentially
+  const proxies = [
+    (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
+  ];
 
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch Yahoo Finance chart data for ${cleanTicker}`);
-  }
+  let lastError: Error | null = null;
 
-  const json = await response.json();
-  const result = json?.chart?.result?.[0];
+  for (const proxyFn of proxies) {
+    try {
+      const url = proxyFn(rawUrl);
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`CORS Proxy returned status ${response.status}`);
+      }
 
-  if (!result) {
-    throw new Error(`Invalid format returned from Yahoo Finance for ${cleanTicker}`);
-  }
+      const json = await response.json();
+      const result = json?.chart?.result?.[0];
 
-  const timestamps: number[] = result.timestamp || [];
-  const quotes = result.indicators?.quote?.[0]?.close || [];
-  const metaLatest = result.meta?.regularMarketPrice;
+      if (!result) {
+        throw new Error(`Invalid format returned from Yahoo Finance for ${cleanTicker}`);
+      }
 
-  const prices: Record<string, number> = {};
-  let lastValidPrice = metaLatest || 0;
+      const timestamps: number[] = result.timestamp || [];
+      const quotes = result.indicators?.quote?.[0]?.close || [];
+      const metaLatest = result.meta?.regularMarketPrice;
 
-  timestamps.forEach((ts, idx) => {
-    const rawPrice = quotes[idx];
-    if (rawPrice !== undefined && rawPrice !== null) {
-      // Convert epoch seconds to YYYY-MM-DD local/UTC date format
-      const dateStr = new Date(ts * 1000).toISOString().split('T')[0];
-      const roundedPrice = parseFloat(rawPrice.toFixed(2));
-      prices[dateStr] = roundedPrice;
-      lastValidPrice = roundedPrice;
+      const prices: Record<string, number> = {};
+      let lastValidPrice = metaLatest || 0;
+
+      timestamps.forEach((ts, idx) => {
+        const rawPrice = quotes[idx];
+        if (rawPrice !== undefined && rawPrice !== null) {
+          // Convert epoch seconds to YYYY-MM-DD local/UTC date format
+          const dateStr = new Date(ts * 1000).toISOString().split('T')[0];
+          const roundedPrice = parseFloat(rawPrice.toFixed(2));
+          prices[dateStr] = roundedPrice;
+          lastValidPrice = roundedPrice;
+        }
+      });
+
+      // Ensure latest price is populated
+      const latestPrice = metaLatest !== undefined && metaLatest !== null 
+        ? parseFloat(metaLatest.toFixed(2)) 
+        : parseFloat(lastValidPrice.toFixed(2));
+
+      return {
+        prices,
+        latestPrice
+      };
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      console.warn(`Proxy failed for ${cleanTicker}, trying next:`, lastError.message);
     }
-  });
+  }
 
-  // Ensure latest price is populated
-  const latestPrice = metaLatest !== undefined && metaLatest !== null 
-    ? parseFloat(metaLatest.toFixed(2)) 
-    : parseFloat(lastValidPrice.toFixed(2));
-
-  return {
-    prices,
-    latestPrice
-  };
+  throw new Error(`Failed to fetch Yahoo Finance chart data for ${cleanTicker} (all proxies failed): ${lastError?.message || lastError}`);
 }
 
 /**
