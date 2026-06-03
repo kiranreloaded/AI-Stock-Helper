@@ -174,13 +174,15 @@ export const App: React.FC = () => {
 
       if (cached && cached.data) {
         cachedData = cached.data;
+        // Populate state with cached data immediately as placeholder/fallback
+        setMarketHistory(cached.data);
+
         const hasAllTickers = tickers.every(t => cached.data[t.toUpperCase()]);
         const isFresh = Date.now() - cached.lastUpdated < cacheAgeLimit;
         console.log('[DEBUG] isFresh:', isFresh, 'hasAllTickers:', hasAllTickers, 'tickers:', tickers);
 
         if (isFresh && hasAllTickers) {
           console.log('[DEBUG] Using fresh and complete cache.');
-          setMarketHistory(cached.data);
           return;
         }
       }

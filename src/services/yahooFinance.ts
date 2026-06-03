@@ -23,7 +23,12 @@ export async function fetchStockData(ticker: string): Promise<StockHistory> {
   for (const proxyFn of proxies) {
     try {
       const url = proxyFn(rawUrl);
-      const response = await fetch(url);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000); // 6s timeout
+
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
       if (!response.ok) {
         throw new Error(`CORS Proxy returned status ${response.status}`);
       }
