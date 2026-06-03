@@ -34,7 +34,7 @@ export const Header: React.FC<HeaderProps> = ({ isConnected, lastSync, onOpenMod
             textShadow: 'none',
             letterSpacing: '0.05em'
           }}>
-            v2.0.15
+            v2.0.16
           </span>
         </h1>
       </div>
