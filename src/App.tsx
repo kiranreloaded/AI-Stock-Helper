@@ -9,7 +9,6 @@ import { HeroSection } from './components/HeroSection';
 import { UpstashService } from './services/upstash';
 import type { Transaction } from './services/upstash';
 import { computeHoldings } from './utils/stockUtils';
-import { fetchMultipleStocks } from './services/yahooFinance';
 import type { MarketHistoryCache } from './services/yahooFinance';
 import { LayoutGrid, ListCollapse, LineChart } from 'lucide-react';
 
@@ -159,71 +158,22 @@ export const App: React.FC = () => {
     }
   };
 
-  // Load market history (from cache or API)
-  const loadMarketHistory = async (tickers: string[]) => {
+  // Load market history (from cache in DB only)
+  const loadMarketHistory = async () => {
     const service = upstashServiceRef.current;
     if (!service) return;
 
     const cacheKey = 'market_history';
-    let cachedData: MarketHistoryCache | null = null;
 
     try {
       const cached = await service.get<{ lastUpdated: number; data: MarketHistoryCache }>(cacheKey);
-      const cacheAgeLimit = 12 * 60 * 60 * 1000; // 12 hours
       console.log('[DEBUG] Retrieved cache from DB:', cached);
 
       if (cached && cached.data) {
-        cachedData = cached.data;
-        // Populate state with cached data immediately as placeholder/fallback
         setMarketHistory(cached.data);
-
-        const hasAllTickers = tickers.every(t => cached.data[t.toUpperCase()]);
-        const isFresh = Date.now() - cached.lastUpdated < cacheAgeLimit;
-        console.log('[DEBUG] isFresh:', isFresh, 'hasAllTickers:', hasAllTickers, 'tickers:', tickers);
-
-        if (isFresh && hasAllTickers) {
-          console.log('[DEBUG] Using fresh and complete cache.');
-          return;
-        }
       }
     } catch (cacheErr) {
       console.warn('Failed to read market history cache from database:', cacheErr);
-    }
-
-    // Try to fetch fresh data
-    try {
-      console.log('[DEBUG] Fetching fresh stock data for:', tickers);
-      const freshData = await fetchMultipleStocks(tickers);
-      console.log('[DEBUG] Fresh data fetched:', freshData);
-      
-      const fetchedCount = Object.keys(freshData).length;
-      if (fetchedCount > 0) {
-        // Merge the fresh data with the existing cached data so we don't lose any tickers
-        console.log('[DEBUG] Merging newly fetched stock data with existing DB cache.');
-        const mergedData = {
-          ...(cachedData || {}),
-          ...freshData
-        };
-
-        setMarketHistory(mergedData);
-
-        // Persist the merged (complete) cache in Upstash
-        await service.set(cacheKey, {
-          lastUpdated: Date.now(),
-          data: mergedData
-        });
-        return;
-      }
-    } catch (fetchErr) {
-      console.warn('Failed to fetch fresh stock data, falling back to cache:', fetchErr);
-    }
-
-    // Fallback to stale cached data if we have it
-    if (cachedData) {
-      console.log('[DEBUG] Falling back to stale/incomplete cache:', cachedData);
-      setMarketHistory(cachedData);
-    } else {
-      console.error('[DEBUG] No market history cache available and fetch failed.');
     }
   };
 
@@ -235,11 +185,7 @@ export const App: React.FC = () => {
       return;
     }
 
-    const holdings = computeHoldings(transactions);
-    const activeTickers = Object.keys(holdings);
-    if (activeTickers.length === 0) return;
-
-    loadMarketHistory(activeTickers);
+    loadMarketHistory();
   }, [transactions, isConnected]);
 
   // Restore saved config on mount
