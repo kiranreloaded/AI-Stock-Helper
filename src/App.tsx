@@ -198,27 +198,21 @@ export const App: React.FC = () => {
       
       const fetchedCount = Object.keys(freshData).length;
       if (fetchedCount > 0) {
-        const hasAllTickers = tickers.every(t => freshData[t.toUpperCase()]);
+        // Merge the fresh data with the existing cached data so we don't lose any tickers
+        console.log('[DEBUG] Merging newly fetched stock data with existing DB cache.');
+        const mergedData = {
+          ...(cachedData || {}),
+          ...freshData
+        };
 
-        if (hasAllTickers) {
-          console.log('[DEBUG] Fetched all tickers successfully. Updating state and DB cache.');
-          setMarketHistory(freshData);
+        setMarketHistory(mergedData);
 
-          // Persist complete cache in Upstash
-          await service.set(cacheKey, {
-            lastUpdated: Date.now(),
-            data: freshData
-          });
-          return;
-        } else {
-          console.warn('[DEBUG] Fetch was incomplete. Merging with cache in state only (not overwriting DB).');
-          const mergedData = {
-            ...(cachedData || {}),
-            ...freshData
-          };
-          setMarketHistory(mergedData);
-          return;
-        }
+        // Persist the merged (complete) cache in Upstash
+        await service.set(cacheKey, {
+          lastUpdated: Date.now(),
+          data: mergedData
+        });
+        return;
       }
     } catch (fetchErr) {
       console.warn('Failed to fetch fresh stock data, falling back to cache:', fetchErr);
