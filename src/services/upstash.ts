@@ -48,7 +48,13 @@ export class UpstashService {
     if (data.error) {
       throw new Error(`Upstash Redis Error: ${data.error}`);
     }
-    return data.result ? JSON.parse(data.result) as T : null;
+    if (!data.result) return null;
+    let parsed = JSON.parse(data.result);
+    // If it was double-stringified, parse it again
+    if (typeof parsed === 'string') {
+      parsed = JSON.parse(parsed);
+    }
+    return parsed as T;
   }
 
   /**
