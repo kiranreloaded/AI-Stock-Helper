@@ -41,29 +41,48 @@ export const App: React.FC = () => {
     if (!service) return;
 
     const cacheKey = 'market_history';
+    let cachedData: Record<string, any> | null = null;
+
     try {
       const cached = await service.get<{ lastUpdated: number; data: Record<string, any> }>(cacheKey);
       const cacheAgeLimit = 12 * 60 * 60 * 1000; // 12 hours
 
-      const hasAllTickers = tickers.every(t => cached?.data?.[t.toUpperCase()]);
-      const isFresh = cached && (Date.now() - cached.lastUpdated < cacheAgeLimit);
+      if (cached && cached.data) {
+        cachedData = cached.data;
+        const hasAllTickers = tickers.every(t => cached.data[t.toUpperCase()]);
+        const isFresh = Date.now() - cached.lastUpdated < cacheAgeLimit;
 
-      if (isFresh && hasAllTickers) {
-        setMarketHistory(cached.data);
+        if (isFresh && hasAllTickers) {
+          setMarketHistory(cached.data);
+          return;
+        }
+      }
+    } catch (cacheErr) {
+      console.warn('Failed to read market history cache from database:', cacheErr);
+    }
+
+    // Try to fetch fresh data
+    try {
+      const freshData = await fetchMultipleStocks(tickers);
+      if (Object.keys(freshData).length > 0) {
+        setMarketHistory(freshData);
+
+        // Persist in Upstash
+        await service.set(cacheKey, {
+          lastUpdated: Date.now(),
+          data: freshData
+        });
         return;
       }
+    } catch (fetchErr) {
+      console.warn('Failed to fetch fresh stock data, falling back to cache:', fetchErr);
+    }
 
-      // Fetch fresh data
-      const freshData = await fetchMultipleStocks(tickers);
-      setMarketHistory(freshData);
-
-      // Persist in Upstash
-      await service.set(cacheKey, {
-        lastUpdated: Date.now(),
-        data: freshData
-      });
-    } catch (err) {
-      console.error('Failed to load market history:', err);
+    // Fallback to stale cached data if we have it
+    if (cachedData) {
+      setMarketHistory(cachedData);
+    } else {
+      console.error('No market history cache available and fetch failed.');
     }
   };
 
